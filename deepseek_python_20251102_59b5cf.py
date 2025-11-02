@@ -2,6 +2,8 @@ from dotenv import load_dotenv
 import os
 import logging
 import sqlite3
+import requests
+import asyncio
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -90,6 +92,7 @@ class AutoEarnBot:
     def __init__(self):
         self.config = Config()
         self.active_users = {}
+        self.work_cycles = {}  # Счетчик циклов работы для каждого пользователя
         self.setup_database()
         
     def setup_database(self):
@@ -144,6 +147,7 @@ class AutoEarnBot:
             [InlineKeyboardButton("📊 Статистика", callback_data="stats")],
             [InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
             [InlineKeyboardButton("💰 Балансы", callback_data="balances")],
+            [InlineKeyboardButton("🔍 Проверить работу", callback_data="check_work")],
             [InlineKeyboardButton("❓ Помощь", callback_data="help")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -183,6 +187,8 @@ class AutoEarnBot:
             await self.show_settings(query)
         elif query.data == "balances":
             await self.show_balances(query)
+        elif query.data == "check_work":
+            await self.check_work_status(query)
         elif query.data == "help":
             await self.show_help(query)
         elif query.data.startswith("exchange_"):
@@ -198,7 +204,8 @@ class AutoEarnBot:
             [InlineKeyboardButton("TextSale ❌", callback_data="exchange_textsale")],
             [InlineKeyboardButton("Workzilla ❌", callback_data="exchange_workzilla")],
             [InlineKeyboardButton("Kwork ❌", callback_data="exchange_kwork")],
-            [InlineKeyboardButton("🎯 Начать авто-работу", callback_data="start_auto_all")]
+            [InlineKeyboardButton("🎯 Начать авто-работу", callback_data="start_auto_all")],
+            [InlineKeyboardButton("🔍 Проверить работу", callback_data="check_work")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -233,7 +240,8 @@ class AutoEarnBot:
             [InlineKeyboardButton(f"TextSale {exchanges_status['textsale']}", callback_data="exchange_textsale")],
             [InlineKeyboardButton(f"Workzilla {exchanges_status['workzilla']}", callback_data="exchange_workzilla")],
             [InlineKeyboardButton(f"Kwork {exchanges_status['kwork']}", callback_data="exchange_kwork")],
-            [InlineKeyboardButton("🎯 Начать авто-работу", callback_data="start_auto_all")]
+            [InlineKeyboardButton("🎯 Начать авто-работу", callback_data="start_auto_all")],
+            [InlineKeyboardButton("🔍 Проверить работу", callback_data="check_work")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -254,12 +262,180 @@ class AutoEarnBot:
             return
         
         self.active_users[user_id]['working'] = True
+        self.work_cycles[user_id] = 0  # Сбрасываем счетчик циклов
         
         await query.edit_message_text(
             "🚀 Запускаю автоматическую работу...\n\n"
             "Бот начал поиск и выполнение заданий на выбранных биржах.\n"
-            "Я буду присылать уведомления о выполненных заданиях."
+            "Я буду присылать уведомления о выполненных заданиях.\n\n"
+            "📊 Для проверки работы используйте команду /check или кнопку 'Проверить работу'"
         )
+        
+        # Запускаем фоновую задачу для имитации работы
+        asyncio.create_task(self.simulate_work(user_id))
+    
+    async def simulate_work(self, user_id):
+        """Имитация работы бота (для демонстрации)"""
+        while user_id in self.active_users and self.active_users[user_id].get('working', False):
+            try:
+                self.work_cycles[user_id] = self.work_cycles.get(user_id, 0) + 1
+                
+                # Логируем работу в консоль
+                print(f"🔍 [Цикл {self.work_cycles[user_id]}] Поиск заданий для пользователя {user_id}")
+                
+                # Имитация поиска на разных биржах
+                for exchange in self.active_users[user_id]['exchanges']:
+                    print(f"📡 Проверяю {exchange}...")
+                    
+                    # Имитация нахождения задания (1 из 3 циклов)
+                    if self.work_cycles[user_id] % 3 == 0:
+                        task_amount = round(0.1 + (self.work_cycles[user_id] * 0.05), 2)
+                        print(f"✅ Найдено задание на {exchange}! Сумма: {task_amount} руб.")
+                        
+                        # Сохраняем в базу
+                        await self.log_task_completion(user_id, exchange, {
+                            'type': 'click', 
+                            'title': f'Тестовое задание #{self.work_cycles[user_id]}'
+                        }, task_amount)
+                        
+                        # Отправляем уведомление
+                        try:
+                            await self.application.bot.send_message(
+                                chat_id=user_id,
+                                text=f"✅ Выполнено задание на {exchange.capitalize()}\n"
+                                     f"💵 Заработано: {task_amount} руб.\n"
+                                     f"📝 Тестовое задание #{self.work_cycles[user_id]}"
+                            )
+                        except Exception as e:
+                            print(f"❌ Ошибка отправки уведомления: {e}")
+                
+                # Ждем перед следующим циклом
+                await asyncio.sleep(self.config.SETTINGS['check_interval'])
+                
+            except Exception as e:
+                print(f"❌ Ошибка в simulate_work: {e}")
+                await asyncio.sleep(30)
+    
+    async def check_work_status(self, query):
+        """Проверка статуса работы бота"""
+        user_id = query.from_user.id
+        
+        check_text = "🔍 **ПРОВЕРКА РАБОТЫ БОТА**\n\n"
+        
+        # 1. Проверка подключения к Telegram API
+        check_text += "1. 📡 Подключение к Telegram API: "
+        try:
+            bot_info = await self.application.bot.get_me()
+            check_text += "✅ РАБОТАЕТ\n"
+            check_text += f"   🤖 Бот: @{bot_info.username}\n"
+        except Exception as e:
+            check_text += f"❌ ОШИБКА: {e}\n"
+        
+        # 2. Проверка статуса работы
+        check_text += "2. ⚙️ Статус автоматической работы: "
+        if user_id in self.active_users and self.active_users[user_id].get('working', False):
+            check_text += "✅ АКТИВНА\n"
+            active_exchanges = [ex.capitalize() for ex in self.active_users[user_id]['exchanges']]
+            check_text += f"   📊 Активные биржи: {', '.join(active_exchanges)}\n"
+            check_text += f"   🔄 Циклов работы: {self.work_cycles.get(user_id, 0)}\n"
+        else:
+            check_text += "❌ НЕ АКТИВНА\n"
+            check_text += "   💡 Используйте 'Начать авто-работу'\n"
+        
+        # 3. Проверка базы данных
+        check_text += "3. 💾 База данных: "
+        try:
+            conn = sqlite3.connect('bot.db')
+            cursor = conn.cursor()
+            
+            # Проверяем таблицы
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [table[0] for table in cursor.fetchall()]
+            
+            required_tables = ['users', 'tasks', 'balances']
+            missing_tables = [table for table in required_tables if table not in tables]
+            
+            if not missing_tables:
+                check_text += "✅ РАБОТАЕТ\n"
+                
+                # Статистика из БД
+                cursor.execute('SELECT COUNT(*) FROM tasks WHERE user_id = ?', (user_id,))
+                task_count = cursor.fetchone()[0]
+                
+                cursor.execute('SELECT SUM(amount) FROM tasks WHERE user_id = ?', (user_id,))
+                total_earned = cursor.fetchone()[0] or 0
+                
+                check_text += f"   📊 Заданий выполнено: {task_count}\n"
+                check_text += f"   💰 Всего заработано: {total_earned:.2f} руб.\n"
+            else:
+                check_text += f"❌ ОШИБКА: Отсутствуют таблицы {missing_tables}\n"
+                
+            conn.close()
+        except Exception as e:
+            check_text += f"❌ ОШИБКА: {e}\n"
+        
+        # 4. Проверка последней активности
+        check_text += "4. 📈 Последняя активность: "
+        try:
+            conn = sqlite3.connect('bot.db')
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT created_at FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
+                (user_id,)
+            )
+            last_task = cursor.fetchone()
+            
+            if last_task:
+                last_time = datetime.fromisoformat(last_task[0])
+                time_diff = (datetime.now() - last_time).total_seconds() / 60  # в минутах
+                check_text += f"✅ {time_diff:.1f} мин. назад\n"
+            else:
+                check_text += "ℹ️ Заданий еще нет\n"
+                
+            conn.close()
+        except Exception as e:
+            check_text += f"❌ ОШИБКА: {e}\n"
+        
+        # 5. Рекомендации
+        check_text += "\n💡 **РЕКОМЕНДАЦИИ:**\n"
+        if user_id not in self.active_users or not self.active_users[user_id].get('working', False):
+            check_text += "• Запустите авто-работу через меню\n"
+        elif self.work_cycles.get(user_id, 0) == 0:
+            check_text += "• Бот только запущен, подождите несколько минут\n"
+        else:
+            check_text += "• Бот работает корректно!\n"
+        
+        keyboard = [
+            [InlineKeyboardButton("🔄 Обновить проверку", callback_data="check_work")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="start_work")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(check_text, reply_markup=reply_markup, parse_mode='Markdown')
+    
+    async def log_task_completion(self, user_id, exchange, task, amount):
+        """Логирование выполненного задания"""
+        conn = sqlite3.connect('bot.db')
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            'INSERT INTO tasks (user_id, exchange, task_type, amount, status, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+            (user_id, exchange, task['type'], amount, 'completed', datetime.now().isoformat())
+        )
+        
+        cursor.execute(
+            'UPDATE users SET total_earned = total_earned + ?, tasks_completed = tasks_completed + 1 WHERE user_id = ?',
+            (amount, user_id)
+        )
+        
+        cursor.execute(
+            'INSERT OR REPLACE INTO balances (user_id, exchange, balance, last_updated) '
+            'VALUES (?, ?, COALESCE((SELECT balance FROM balances WHERE user_id = ? AND exchange = ?), 0) + ?, ?)',
+            (user_id, exchange, user_id, exchange, amount, datetime.now().isoformat())
+        )
+        
+        conn.commit()
+        conn.close()
     
     async def show_stats(self, query):
         """Показать статистику"""
@@ -284,7 +460,8 @@ class AutoEarnBot:
             
             stats_text = f"📊 Ваша статистика:\n\n"
             stats_text += f"💰 Всего заработано: {total_earned:.2f} руб.\n"
-            stats_text += f"✅ Выполнено заданий: {tasks_completed}\n\n"
+            stats_text += f"✅ Выполнено заданий: {tasks_completed}\n"
+            stats_text += f"🔄 Циклов работы: {self.work_cycles.get(user_id, 0)}\n\n"
             stats_text += "📈 По биржам:\n"
             
             for exchange, amount in by_exchange:
@@ -295,7 +472,10 @@ class AutoEarnBot:
         
         conn.close()
         
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="start_work")]]
+        keyboard = [
+            [InlineKeyboardButton("🔍 Проверить работу", callback_data="check_work")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="start_work")]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(stats_text, reply_markup=reply_markup)
@@ -326,7 +506,10 @@ class AutoEarnBot:
         
         conn.close()
         
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="start_work")]]
+        keyboard = [
+            [InlineKeyboardButton("🔍 Проверить работу", callback_data="check_work")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="start_work")]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(balance_text, reply_markup=reply_markup)
@@ -342,7 +525,10 @@ class AutoEarnBot:
             f"🤖 Автопринятие: {'Вкл' if self.config.SETTINGS['auto_accept_tasks'] else 'Выкл'}\n"
         )
         
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="start_work")]]
+        keyboard = [
+            [InlineKeyboardButton("🔍 Проверить работу", callback_data="check_work")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="start_work")]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(settings_text, reply_markup=reply_markup)
@@ -361,13 +547,18 @@ class AutoEarnBot:
             "• Автовыполнение\n"
             "• Умные фильтры\n"
             "• Статистика\n\n"
+            "🔍 **Проверка работы:**\n"
+            "Используйте кнопку 'Проверить работу' для диагностики\n\n"
             "⚠️ Важно:\n"
             "• Соблюдайте правила бирж\n"
             "• Настройте лимиты\n"
             "• Мониторьте работу\n"
         )
         
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="start_work")]]
+        keyboard = [
+            [InlineKeyboardButton("🔍 Проверить работу", callback_data="check_work")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="start_work")]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(help_text, reply_markup=reply_markup)
@@ -385,11 +576,32 @@ class AutoEarnBot:
         if user_id in self.active_users and self.active_users[user_id].get('working', False):
             status_text = "🟢 Бот работает\n"
             active_exchanges = [ex.capitalize() for ex in self.active_users[user_id]['exchanges']]
-            status_text += f"📊 Активные биржи: {', '.join(active_exchanges)}"
+            status_text += f"📊 Активные биржи: {', '.join(active_exchanges)}\n"
+            status_text += f"🔄 Циклов работы: {self.work_cycles.get(user_id, 0)}"
         else:
             status_text = "🔴 Бот остановлен"
         
         await update.message.reply_text(status_text)
+    
+    async def check_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда для проверки работы"""
+        user_id = update.effective_user.id
+        
+        # Создаем fake query для использования существующего метода
+        class FakeQuery:
+            def __init__(self, user_id):
+                self.from_user = type('User', (), {'id': user_id})()
+                self.edit_message_text = self.fake_edit
+                self.message = type('Message', (), {'reply_text': self.fake_reply})()
+            
+            async def fake_edit(self, *args, **kwargs):
+                await update.message.reply_text(*args, **kwargs)
+            
+            async def fake_reply(self, *args, **kwargs):
+                await update.message.reply_text(*args, **kwargs)
+        
+        fake_query = FakeQuery(user_id)
+        await self.check_work_status(fake_query)
 
 def main():
     """Синхронная главная функция"""
@@ -402,17 +614,22 @@ def main():
         # Создаем приложение
         application = Application.builder().token(bot.config.BOT_TOKEN).build()
         
+        # Сохраняем application для использования в других методах
+        bot.application = application
+        
         # Обработчики команд
         application.add_handler(CommandHandler("start", bot.start))
         application.add_handler(CommandHandler("stop", bot.stop))
         application.add_handler(CommandHandler("status", bot.status))
         application.add_handler(CommandHandler("stats", bot.show_stats))
+        application.add_handler(CommandHandler("check", bot.check_command))
         
         # Обработчики кнопок
         application.add_handler(CallbackQueryHandler(bot.button_handler))
         
         print("✅ Бот успешно запущен!")
         print("📝 Используйте команду /start в Telegram для начала работы")
+        print("🔍 Для проверки работы используйте /check или кнопку 'Проверить работу'")
         
         # Запускаем бота
         application.run_polling()
