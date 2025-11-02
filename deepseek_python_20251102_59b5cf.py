@@ -28,7 +28,7 @@ logging.basicConfig(
 load_dotenv()
 
 # Проверяем токен - ИСПРАВЛЕННАЯ СТРОКА
-BOT_TOKEN = os.getenv('8452117988:AAGlaDevcJybryzWDzwRQA-hWiwEhJfblIg')
+BOT_TOKEN = os.getenv('8452117988:AAG3H3o1HCNacMCGaEfXF6LnK4RhXe4dT8c')
 
 def is_valid_token(token):
     """Проверяет валидность токена"""
