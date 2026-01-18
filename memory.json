@@ -1,0 +1,8 @@
+{
+    "lot_memory": {
+        "lot_amount": 1000,
+        "lot_price": 10,
+        "lot_min_sum": 1,
+        "lot_active": false
+    }
+}
